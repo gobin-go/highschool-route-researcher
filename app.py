@@ -8,7 +8,7 @@ from flask import Flask, request, send_file, render_template_string, jsonify
 # 기본 설정
 # =========================
 app = Flask(__name__)
-app.config['JSON_AS_ASCII'] = False  # ★ CHANGED: JSON 응답에서 한글 깨짐 방지
+app.config['JSON_AS_ASCII'] = False  # ★ JSON 응답에서 한글 깨짐 방지
 
 # 좌표가 설계된 원본 지도 기준 크기 (고정)
 BASE_W, BASE_H = 800, 600
@@ -306,17 +306,24 @@ HTML = """
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>울산여자고등학교 길찾기 시스템</title>
-  <!-- ★ CHANGED: 웹 폰트 로드(UI 한글 안정 렌더링) -->
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;600&display=swap" rel="stylesheet">
   <style>
     body { font-family: 'Noto Sans KR', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", sans-serif; margin: 20px; }
     .row { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
     select, button { padding:8px 10px; font-size:16px; }
-    img { max-width:100%; height:auto; border:1px solid #ddd; border-radius:8px; }
-    .legend { max-width:260px; }
+    /* ★ CHANGED: 지도는 항상 컨테이너 가로폭을 꽉 채움 */
+    img { width:100%; height:auto; border:1px solid #ddd; border-radius:8px; }
+    .legend { width:100%; max-width:260px; } /* 데스크톱 기본 */
     .wrap { display:grid; grid-template-columns: 1fr 280px; gap:16px; align-items:start; }
     .floors { margin: 8px 0 16px; }
     .badge { display:inline-block; background:#f5f5f5; padding:4px 8px; border-radius:8px; border:1px solid #ddd; }
+
+    /* ★ CHANGED: 모바일에서는 1단 레이아웃 + 범례 축소 */
+    @media (max-width: 768px) {
+      body { margin: 12px; }
+      .wrap { grid-template-columns: 1fr; }
+      .legend { max-width: 160px; }
+    }
   </style>
 </head>
 <body>
@@ -351,7 +358,6 @@ HTML = """
   </div>
 
 <script>
-  // ★ CHANGED: 파이썬 dict → 안전한 JSON 직렬화
   const classroom = {{ classroom|tojson }};
   const classroomOnly = Object.keys(classroom).filter(k => !(k.startsWith("복도") || k.startsWith("계단"))).sort();
   const startSel = document.getElementById("start");
@@ -378,10 +384,21 @@ HTML = """
     const target = document.querySelector('input[name="floor"][value="'+f+'"]');
     if (target) target.checked = true;
   }
+
+  /* ★ CHANGED: 현재 컨테이너 가로폭을 계산해서 그 크기로 지도 생성 */
+  function targetWidth(){
+    const container = mapImg.parentElement;
+    let w = container ? container.clientWidth : document.documentElement.clientWidth;
+    if (!w || w < 100) w = window.innerWidth; // 최후 보정
+    return Math.max(320, Math.min(1600, Math.round(w))); // 과도한 크기 방지
+  }
+
   function refresh(){
-    const url = `/map.png?start=${encodeURIComponent(startSel.value)}&end=${encodeURIComponent(endSel.value)}&floor=${encodeURIComponent(currentFloor())}&w=1000&_=${Date.now()}`;
+    const w = targetWidth();  // ★ CHANGED: 고정값(1000) 대신 동적 폭
+    const url = `/map.png?start=${encodeURIComponent(startSel.value)}&end=${encodeURIComponent(endSel.value)}&floor=${encodeURIComponent(currentFloor())}&w=${w}&_=${Date.now()}`;
     mapImg.src = url;
   }
+
   async function calcSeq(){
     const res = await fetch(`/api/route?start=${encodeURIComponent(startSel.value)}&end=${encodeURIComponent(endSel.value)}`);
     const data = await res.json();
@@ -392,7 +409,7 @@ HTML = """
     }
   }
 
-  // ★ CHANGED: 경로 표시 시, 출발지의 층으로 자동 전환
+  // 경로 표시 시, 출발지의 층으로 자동 전환
   document.getElementById("go").onclick = ()=>{
     const startInfo = classroom[startSel.value];    // [x, y, '층']
     if (startInfo && startInfo.length === 3){
@@ -406,6 +423,10 @@ HTML = """
   document.querySelectorAll('input[name="floor"]').forEach(r=>{
     r.addEventListener('change', refresh);
   });
+
+  /* ★ CHANGED: 화면 리사이즈/회전 시 지도 재생성 (디바운스) */
+  let _rz;
+  window.addEventListener('resize', ()=>{ clearTimeout(_rz); _rz = setTimeout(refresh, 200); });
 
   // 최초 렌더
   refresh(); calcSeq();
